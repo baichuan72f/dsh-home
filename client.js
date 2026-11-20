@@ -748,11 +748,13 @@ window.__ModuleLoader__.load({
         return { byParent, roots: tags.filter((tag) => !tag.parent || !known.has(tag.parent)) };
       }, [tags]);
       const tagMatches = useMemo(() => { const needle = tagQuery.trim().toLowerCase(); return needle ? tags.filter((tag) => tag.path.toLowerCase().includes(needle)) : []; }, [tags, tagQuery]);
-      const tagRow = (tag, depth) => {
+      const tagRow = (tag, depth, flat) => {
         const children = tagGroups.byParent.get(tag.id) || [];
         const open = expanded.has(tag.id);
         const on = filters.tagId !== undefined && String(filters.tagId) === String(tag.id);
-        const parentPath = depth > 0 && String(tag.path).includes('/') ? String(tag.path).slice(0, String(tag.path).lastIndexOf('/') + 1) : '';
+        const parentKnown = !tag.parent || tag.parent === '0' ? false : tags.some((item) => String(item.id) === String(tag.parent));
+        const wantPath = Boolean(flat) || !parentKnown;
+        const parentPath = wantPath && String(tag.path).includes('/') ? String(tag.path).slice(0, String(tag.path).lastIndexOf('/') + 1) : '';
         const pick = () => {
           const now = Date.now();
           const id = String(tag.id);
@@ -788,7 +790,7 @@ window.__ModuleLoader__.load({
             h('div', { className: 'ch-tag-search' }, h('input', { value: tagQuery, onChange: (event) => setTagQuery(event.target.value), placeholder: t('notesTagsSearch'), 'aria-label': t('notesTagsSearch'), maxLength: 100 })),
             tagsLoading && !tags.length ? h('p', { className: 'ch-tag-panel-foot' }, t('notesTagsLoading'))
               : !tags.length ? h('p', { className: 'ch-tag-panel-foot' }, t('notesTagsEmpty'))
-                : h('div', { className: 'ch-tag-list', role: 'group', 'aria-label': t('notesTagsTitle') }, tagQuery.trim() ? tagMatches.map((tag) => tagRow(tag, 0)) : tagRowsFrom(tagGroups.roots, 0)),
+                : h('div', { className: 'ch-tag-list', role: 'group', 'aria-label': t('notesTagsTitle') }, tagQuery.trim() ? tagMatches.map((tag) => tagRow(tag, 0, true)) : tagRowsFrom(tagGroups.roots, 0)),
             h('div', { className: 'ch-tag-panel-foot' },
               h('button', { className: 'ch-btn', type: 'button', onClick: () => setFilters((previous) => ({ ...previous, tag: '', tagId: undefined, withoutTag: true })) }, icon('note', 12), t('notesTagsNone')),
               blinkoEndpoint && h('a', { href: blinkoEndpoint, target: '_blank', rel: 'noreferrer noopener' }, t('notesTagsManage') + ' ↗'),
