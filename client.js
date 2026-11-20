@@ -314,9 +314,15 @@ window.__ModuleLoader__.load({
 .ch-tag-panel input{width:100%;border:1px solid color-mix(in srgb,var(--ch-ink) 14%,transparent);border-radius:8px;background:var(--ch-card);color:var(--ch-ink);padding:7px 9px;font-size:12px}
 .ch-tag-panel input::placeholder{color:var(--ch-ink-soft);opacity:1}
 .ch-tag-list{display:flex;flex-direction:column;gap:2px;margin-top:8px}
-.ch-tag-line{display:flex;align-items:center;gap:4px}
-.ch-tag-caret{flex:0 0 auto;width:14px;border:0;background:transparent;color:var(--ch-ink-soft);padding:0;min-height:auto;font-size:10px}
-.ch-tag-row{flex:1;min-width:0;display:flex;align-items:center;gap:6px;border:0;background:transparent;color:var(--ch-ink-soft);text-align:left;padding:6px 7px;border-radius:7px;font-size:12px;min-height:30px}
+.ch-tag-line{display:flex;align-items:center;gap:2px;border-radius:7px}
+.ch-tag-caret{flex:0 0 auto;width:24px;height:24px;display:inline-flex;align-items:center;justify-content:center;border:0;background:transparent;color:var(--ch-ink-soft);padding:0;min-height:auto;font-size:12px;line-height:1;border-radius:6px;transition:transform .12s ease,background .12s ease,color .12s ease}
+.ch-tag-line:hover .ch-tag-caret{color:var(--ch-ink)}
+.ch-tag-caret:hover{background:var(--ch-btn-bg)}
+.ch-tag-caret.ch-tag-caret-open{transform:rotate(90deg)}
+.ch-tag-caret.ch-tag-caret-leaf{visibility:hidden}
+.ch-tag-row{flex:1;min-width:0;display:flex;align-items:center;gap:5px;border:0;background:transparent;color:var(--ch-ink-soft);text-align:left;padding:6px 8px;border-radius:7px;font-size:12px;min-height:30px}
+.ch-tag-row-path{flex:0 1 auto;max-width:46%;color:var(--ch-ink-soft);opacity:.62;font-size:11px}
+.ch-tag-row.ch-tag-row-on .ch-tag-row-path{color:var(--ch-card);opacity:.72}
 .ch-tag-row:hover{background:var(--ch-btn-bg);color:var(--ch-ink)}
 .ch-tag-row.ch-tag-row-on{background:var(--ch-ink);color:var(--ch-card)}
 .ch-tag-row span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -732,9 +738,12 @@ window.__ModuleLoader__.load({
         const children = tagGroups.byParent.get(tag.id) || [];
         const open = expanded.has(tag.id);
         const on = filters.tagId !== undefined && String(filters.tagId) === String(tag.id);
-        return h('div', { className: 'ch-tag-line', key: tag.id, style: { paddingLeft: depth * 12 } },
-          children.length > 0 ? h('button', { type: 'button', className: 'ch-tag-caret', 'aria-expanded': open, 'aria-label': open ? t('notesTagsClose') : t('notesTagsOpen'), onClick: () => setExpanded((previous) => { const next = new Set(previous); if (next.has(tag.id)) next.delete(tag.id); else next.add(tag.id); return next; }) }, open ? '▾' : '▸') : h('span', { className: 'ch-tag-caret', 'aria-hidden': 'true' }),
-          h('button', { type: 'button', className: 'ch-tag-row' + (on ? ' ch-tag-row-on' : ''), 'aria-pressed': on, title: tag.path, onClick: () => { if (on) clearTag(); else setFilters((previous) => ({ ...previous, tag: tag.path, tagId: tag.id, withoutTag: false })); setTagOpen(false); } }, h('span', null, '#' + tag.name)));
+        const parentPath = depth > 0 && String(tag.path).includes('/') ? String(tag.path).slice(0, String(tag.path).lastIndexOf('/') + 1) : '';
+        return h('div', { className: 'ch-tag-line', key: tag.id, style: { paddingLeft: depth * 14 } },
+          children.length > 0 ? h('button', { type: 'button', className: 'ch-tag-caret' + (open ? ' ch-tag-caret-open' : ''), 'aria-expanded': open, 'aria-label': open ? t('notesTagsClose') : t('notesTagsOpen'), title: open ? t('notesTagsClose') : t('notesTagsOpen'), onClick: () => setExpanded((previous) => { const next = new Set(previous); if (next.has(tag.id)) next.delete(tag.id); else next.add(tag.id); return next; }) }, '▸') : h('span', { className: 'ch-tag-caret ch-tag-caret-leaf', 'aria-hidden': 'true' }, '▸'),
+          h('button', { className: 'ch-tag-row' + (on ? ' ch-tag-row-on' : ''), type: 'button', 'aria-pressed': on, title: tag.path, onClick: () => { if (on) clearTag(); else setFilters((previous) => ({ ...previous, tag: tag.path, tagId: tag.id, withoutTag: false })); setTagOpen(false); } },
+            parentPath ? h('span', { className: 'ch-tag-row-path' }, parentPath) : null,
+            h('span', { className: 'ch-tag-row-name' }, '#' + tag.name)));
       };
       const tagRowsFrom = (list, depth) => list.flatMap((tag) => {
         const children = tagGroups.byParent.get(tag.id) || [];
