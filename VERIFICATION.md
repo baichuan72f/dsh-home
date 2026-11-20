@@ -2,6 +2,18 @@
 
 本文保留各轮验收快照；当前发布状态见[发布记录](docs/release-20261108.md)。文中的本机路径不作为网页链接或远端可访问证据。
 
+## 标签：服务端索引与标签面板（2026-11-20，第二轮增量）
+
+Blinko 的标签是独立表（`parent` 指向父标签），时间流里只拿到末级名，所以之前只能按名称在前端过滤，翻不到已加载页之外的笔记。这一轮把标签做成服务端能力，并把 Home 的标签入口从平铺条改成可展开的面板。
+
+- `blinko.js`：`request` 支持 GET；新增 `tags` 动作走 `GET /api/v1/tags/list`，用 `parent` 重建层级（`parent` 缺失或指向不存在的 id 时按根节点处理，并做环检测），返回 `{id, name, path, icon, parent}` 并按路径排序。`list` 新增 `tagId`／`withoutTag` 透传，`tag` 名称先解析成 id 再交给服务端；名称解析不到时返回空页而不是退化成"不过滤"。游标把 `keywords` 与筛选（名称／id／无标签）一起绑进哈希，条件一变就报「分页位置无效」。
+- `index.js`：`dsh_home_notes` 增加 `tags` 动作与 `tagId`／`withoutTag` 参数；`/api/dsh-home` 的 augment 增加 `blinko.endpoint`，供前端渲染「在 Blinko 中管理标签」的跳转链接。
+- `client.js`：时间流工具栏加「标签」按钮，点开是面板——标签搜索框、可折叠的层级树、点标签即按 `tagId` 筛选、再点取消，「无标签的笔记」与「在 Blinko 中管理 ↗」在面板底部；筛选状态在摘要栏显示为可清除的 chip。标签行的对比度沿用上一轮的 ink/ink-soft 变量，选中态是 ink 底 + 卡片色字。
+- `npm run check`：**96 项，94 通过、0 失败、2 个可选浏览器父用例跳过**。`test/blinko.test.js` 增加标签索引、未知标签返回空、`withoutTag` 透传三项，并把原来的"本地过滤"与游标用例改成服务端 `tagId` 口径；`test/host.test.js` 的 `/api/dsh-home` 断言补上 `blinko: null`。
+- 真实链路（`http://127.0.0.1:1111`）：`tags` 返回 7 个标签，`Welcome` 的四个子标签重建为 `Welcome/Attachment`、`Welcome/Code`、`Welcome/Multi-Level-Tags`、`Welcome/To-Do`；`tagId=1` 得 5 条，按路径与按名称解析同样得 5 条，不存在的 `tagId` 得 0 条，`withoutTag` 得 2 条。
+
+未覆盖：页面侧仍未做浏览器逐项点验（本机无法读取 DSH 窗口的 DOM），标签面板的实际观感需要人工确认。
+
 ## Blinko 笔记后端：第一轮增量（2026-11-19）
 
 在 0.3.0 基础上新增 Blinko 作为笔记后端，与 Flomo 同处一个功能位、二选一。宿主侧实测通过；页面侧未做浏览器验收，见下方「未覆盖」。

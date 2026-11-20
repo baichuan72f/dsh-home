@@ -43,8 +43,11 @@ const tokenSchema = z.string().trim().min(1).max(2048).refine((value) => !/[\u00
 const actionsSchema = z.discriminatedUnion('action', [
   action('list', {
     keywords: z.string().trim().max(1000).optional(), tag: z.string().trim().max(200).optional(),
+    tagId: z.union([z.number().int().nonnegative(), z.string().regex(/^[0-9]{1,18}$/)]).optional(),
+    withoutTag: z.boolean().optional(),
     before: z.string().min(1).max(2048).optional(),
   }),
+  action('tags'),
   action('get', { id: idSchema }),
   action('create', {
     content: z.string().min(1).max(30_000).refine((value) => value.trim().length > 0), requestId: idSchema,
@@ -67,10 +70,19 @@ const rawNoteSchema = z.object({
   tags: z.array(rawTagSchema).max(1000).nullish(),
   attachments: z.array(rawAttachmentSchema).max(1000).nullish(),
 });
+const rawTagListSchema = z.array(z.object({
+  id: z.union([z.number().int().nonnegative(), idSchema]),
+  name: z.string().min(1).max(1000),
+  icon: z.string().max(100).nullish(),
+  parent: z.union([z.number().int(), z.string().max(100), z.null()]).optional(),
+})).max(5000);
 const listSchema = z.array(rawNoteSchema).max(500);
 const cursorSchema = z.object({ v: z.literal(1), p: z.number().int().min(1).max(10_000), q: z.string().length(64), t: z.string().max(200) }).strict();
 const hash = (value) => createHash('sha256').update(value).digest('hex');
-const queryHash = (args) => hash(JSON.stringify([args.keywords || '', args.tag || '']));
+// The tag filter can arrive as a name, as a tag id, or as "without tag"; all
+// three narrow the same list, so the cursor records whichever one is in use.
+const filterKey = (args) => [args.tag || '', args.tagId === undefined ? '' : String(args.tagId), args.withoutTag ? 'none' : ''].join('|');
+const queryHash = (args) => hash(`${args.keywords || ''}\u0000${filterKey(args)}`);
 const malformed = () => new HomeError('Blinko 返回了无法读取的数据，请稍后刷新。', 502);
 const unknownOutcome = () => new HomeError('这次创建的结果未知，已停止自动重发。请先刷新笔记确认是否已保存，再决定是否手动重新创建。', 409);
 const disposedError = () => new HomeError('笔记服务已关闭，请刷新页面后重试。', 503);
@@ -88,6 +100,40 @@ function tagNames(rawTags) {
     if (typeof name === 'string' && name && !names.includes(name)) names.push(name);
   }
   return names;
+}
+
+// Blinko stores tags as a flat table whose `parent` points at another tag id;
+// the timeline only ever sees leaf names, so the path is rebuilt here.
+function buildTagIndex(rawTags) {
+  const byId = new Map();
+  for (const raw of rawTags) {
+    const id = String(raw.id);
+    if (byId.has(id)) continue;
+    const parent = raw.parent === undefined || raw.parent === null ? '' : String(raw.parent);
+    byId.set(id, { id, name: raw.name, icon: raw.icon ?? null, parent });
+  }
+  const pathOf = (node) => {
+    const chain = [node.name];
+    const seen = new Set([node.id]);
+    let parent = node.parent ? byId.get(node.parent) : null;
+    while (parent && !seen.has(parent.id)) {
+      seen.add(parent.id);
+      chain.unshift(parent.name);
+      parent = parent.parent ? byId.get(parent.parent) : null;
+    }
+    return chain.join('/');
+  };
+  return [...byId.values()]
+    .map((node) => ({ id: node.id, name: node.name, path: pathOf(node), icon: node.icon, parent: node.parent || null }))
+    .sort((left, right) => left.path.localeCompare(right.path, 'zh-Hans-CN'));
+}
+
+function findTagId(tags, wanted) {
+  const needle = wanted.replace(/^#/, '').trim().toLowerCase();
+  if (!needle) return null;
+  const exact = tags.find((tag) => tag.path.toLowerCase() === needle) || tags.find((tag) => tag.name.toLowerCase() === needle);
+  if (exact) return exact.id;
+  return tags.find((tag) => tag.path.toLowerCase().endsWith(`/${needle}`))?.id ?? null;
 }
 
 function normalizeFiles(attachments, endpoint) {
@@ -127,13 +173,13 @@ function parseCursor(before, args) {
   if (!before.startsWith('blinko:')) throw new HomeError('笔记分页位置无效，请刷新列表。');
   try {
     const cursor = cursorSchema.parse(JSON.parse(Buffer.from(before.slice(7), 'base64url').toString('utf8')));
-    if (cursor.q !== queryHash(args) || cursor.t !== (args.tag || '')) throw new Error('query changed');
+    if (cursor.q !== queryHash(args) || cursor.t !== filterKey(args)) throw new Error('query changed');
     return cursor;
   } catch { throw new HomeError('笔记分页位置无效，请刷新列表。'); }
 }
 
 function encodeCursor(page, args) {
-  return `blinko:${Buffer.from(JSON.stringify({ v: 1, p: page, q: queryHash(args), t: args.tag || '' })).toString('base64url')}`;
+  return `blinko:${Buffer.from(JSON.stringify({ v: 1, p: page, q: queryHash(args), t: filterKey(args) })).toString('base64url')}`;
 }
 
 /** Shared Host operations. fetchImpl substitutes the transport in offline tests. */
@@ -194,14 +240,18 @@ export function createBlinkoService({
     return operation.done;
   }
 
-  async function request(operation, token, path, body) {
+  async function request(operation, token, path, body, method = 'POST') {
     operation.check();
     let response;
     try {
       response = await fetchImpl(`${base()}/api/v1${path}`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify(body ?? {}),
+        method,
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: 'application/json',
+          ...(method === 'GET' ? {} : { 'Content-Type': 'application/json' }),
+        },
+        ...(method === 'GET' ? {} : { body: JSON.stringify(body ?? {}) }),
         redirect: 'error',
         signal: operation.controller.signal,
       });
@@ -218,7 +268,26 @@ export function createBlinkoService({
     try { return JSON.parse(text); } catch { throw malformed(); }
   }
 
+  async function fetchTags(operation, token) {
+    const payload = await request(operation, token, '/tags/list', undefined, 'GET');
+    const parsed = rawTagListSchema.safeParse(payload);
+    if (!parsed.success) throw malformed();
+    return buildTagIndex(parsed.data);
+  }
+
+  // The list endpoint filters by tag id on the server, so a name has to be
+  // resolved first: filtering in the browser only ever saw the loaded pages.
+  async function resolveTagScope(operation, token, args) {
+    if (args.withoutTag) return { withoutTag: true };
+    if (args.tagId !== undefined) return { tagId: Number(args.tagId) };
+    if (!args.tag) return {};
+    const id = findTagId(await fetchTags(operation, token), args.tag);
+    return id === null ? { missing: true } : { tagId: Number(id) };
+  }
+
   async function list(operation, token, args) {
+    const scope = await resolveTagScope(operation, token, args);
+    if (scope.missing) return { configured: true, notes: [], hasMore: false, nextBefore: null, syncedAt: Date.now() };
     const cursor = parseCursor(args.before, args);
     let page = cursor ? cursor.p : 1;
     const found = new Map();
@@ -226,12 +295,13 @@ export function createBlinkoService({
     for (let attempt = 0; attempt < MAX_PAGES; attempt += 1) {
       const payload = await request(operation, token, '/note/list', {
         searchText: args.keywords || '', size: FETCH_PAGE_SIZE, page, isUseAiQuery: false,
+        ...(scope.withoutTag ? { withoutTag: true } : {}),
+        ...(scope.tagId === undefined ? {} : { tagId: scope.tagId }),
       });
       const parsed = listSchema.safeParse(payload);
       if (!parsed.success) throw malformed();
       const notes = parsed.data.map((raw) => normalizeNote(raw, base()));
-      const wanted = args.tag ? notes.filter((note) => note.tags.some((tag) => tag.toLowerCase() === args.tag.toLowerCase())) : notes;
-      for (const note of wanted) if (!found.has(note.id)) found.set(note.id, note);
+      for (const note of notes) if (!found.has(note.id)) found.set(note.id, note);
       hasMore = parsed.data.length >= FETCH_PAGE_SIZE;
       if (found.size > PAGE_SIZE || !hasMore) break;
       page += 1;
@@ -286,12 +356,14 @@ export function createBlinkoService({
       if (args.action === 'status') return { configured: !(resolved === undefined || resolved === null || resolved === '') };
       if (resolved === undefined || resolved === null || resolved === '') {
         if (args.action === 'list') return { configured: false, notes: [], hasMore: false, nextBefore: null, syncedAt: Date.now() };
+        if (args.action === 'tags') return { configured: false, tags: [], syncedAt: Date.now() };
         throw new HomeError('请先配置 Blinko API Key。', 401);
       }
       const parsedToken = tokenSchema.safeParse(resolved);
       if (!parsedToken.success) throw new HomeError('Blinko API Key 无效，请重新配置。', 401);
       if (args.action === 'create') return create(operation, args, parsedToken.data);
       if (args.action === 'list') return list(operation, parsedToken.data, args);
+      if (args.action === 'tags') return { configured: true, tags: await fetchTags(operation, parsedToken.data), syncedAt: Date.now() };
       const raw = await request(operation, parsedToken.data, '/note/detail', { id: Number(args.id) || args.id });
       const parsed = rawNoteSchema.safeParse(raw);
       if (!parsed.success) throw new HomeError('这条笔记不存在或暂时无法读取。', 404);

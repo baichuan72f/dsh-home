@@ -23,7 +23,7 @@ function fixture(options = {}) {
   const requests = [];
   const fetchImpl = async (url, init) => {
     const body = init?.body ? JSON.parse(init.body) : null;
-    requests.push({ url, body, headers: init?.headers ?? {} });
+    requests.push({ url, body, method: init?.method ?? 'POST', headers: init?.headers ?? {} });
     const handler = options.fetch;
     if (handler) return handler(url, body, requests);
     return new Response('[]', { status: 200, headers: { 'Content-Type': 'application/json' } });
@@ -57,23 +57,81 @@ test('list normalizes Blinko notes, tags and attachment URLs', async () => {
   await service.close();
 });
 
-test('list filters by tag locally', async () => {
-  const notes = [
-    rawNote(1, { tags: [{ tag: { name: 'idea' } }] }),
-    rawNote(2, { tags: [{ tag: { name: 'other' } }] }),
-    rawNote(3, { tags: null }),
-  ];
-  const { service } = fixture({ fetch: () => new Response(JSON.stringify(notes), { status: 200 }) });
-  const page = await service.run({ action: 'list', tag: 'IDEA' });
+test('list resolves a tag name to the server-side tag id', async () => {
+  const notes = [rawNote(1, { tags: [{ tag: { id: 4, name: 'idea', parent: 3 } }] })];
+  const { service, requests } = fixture({
+    fetch: (url, body) => {
+      if (url.endsWith('/tags/list')) {
+        return new Response(JSON.stringify([
+          { id: 3, name: 'Books', parent: 0 },
+          { id: 4, name: 'idea', parent: 3 },
+        ]), { status: 200 });
+      }
+      return new Response(JSON.stringify(body.tagId === 4 ? notes : []), { status: 200 });
+    },
+  });
+  const page = await service.run({ action: 'list', tag: 'books/IDEA' });
   assert.deepEqual(page.notes.map((note) => note.id), ['1']);
-  assert.equal(page.hasMore, false);
+  const tagCall = requests.find((entry) => entry.url.endsWith('/tags/list'));
+  assert.equal(tagCall.method, 'GET');
+  assert.equal(tagCall.headers.Authorization, 'Bearer fake-key');
+  const listCall = requests.find((entry) => entry.url.endsWith('/note/list'));
+  assert.equal(listCall.body.tagId, 4);
+  await service.close();
+});
+
+test('an unknown tag returns an empty page instead of unfiltered notes', async () => {
+  const { service, requests } = fixture({
+    fetch: (url) => new Response(JSON.stringify(url.endsWith('/tags/list') ? [{ id: 1, name: 'idea', parent: 0 }] : [rawNote(1)]), { status: 200 }),
+  });
+  const page = await service.run({ action: 'list', tag: 'missing' });
+  assert.deepEqual(page.notes, []);
+  assert.equal(requests.some((entry) => entry.url.endsWith('/note/list')), false);
+  await service.close();
+});
+
+test('list passes withoutTag through and never resolves a name', async () => {
+  const { service, requests } = fixture({
+    fetch: (url, body) => new Response(JSON.stringify(url.endsWith('/note/list') && body.withoutTag ? [rawNote(3, { tags: null })] : []), { status: 200 }),
+  });
+  const page = await service.run({ action: 'list', withoutTag: true });
+  assert.deepEqual(page.notes.map((note) => note.id), ['3']);
+  assert.equal(requests.some((entry) => entry.url.endsWith('/tags/list')), false);
+  assert.equal(requests[0].body.withoutTag, true);
+  await service.close();
+});
+
+test('tags exposes the full hierarchical path', async () => {
+  const { service, requests } = fixture({
+    fetch: () => new Response(JSON.stringify([
+      { id: 2, name: 'Different', parent: 1, icon: '📚' },
+      { id: 1, name: 'Books', parent: 0 },
+      { id: 3, name: '营销近视症', parent: 2 },
+      { id: 9, name: 'Orphan', parent: 77 },
+    ]), { status: 200 }),
+  });
+  const value = await service.run({ action: 'tags' });
+  assert.equal(value.configured, true);
+  assert.deepEqual(value.tags.find((tag) => tag.id === '3'), {
+    id: '3', name: '营销近视症', path: 'Books/Different/营销近视症', icon: null, parent: '2',
+  });
+  assert.equal(value.tags.find((tag) => tag.id === '9').path, 'Orphan');
+  assert.equal(requests[0].url, `${ENDPOINT}/api/v1/tags/list`);
+  await service.close();
+});
+
+test('tags reports an unconfigured credential instead of failing', async () => {
+  const { service } = fixture({ token: undefined });
+  const value = await service.run({ action: 'tags' });
+  assert.deepEqual(value, { configured: false, tags: [], syncedAt: value.syncedAt });
   await service.close();
 });
 
 test('list keeps a resumable cursor across backend pages', async () => {
   let served = 0;
   const { service } = fixture({
-    fetch: () => {
+    fetch: (url) => {
+      if (url.endsWith('/tags/list')) return new Response(JSON.stringify([{ id: 1, name: 'idea', parent: 0 }]), { status: 200 });
       served += 1;
       const notes = served === 1
         ? Array.from({ length: 50 }, (_, index) => rawNote(index + 1, { tags: [{ tag: { name: 'idea' } }] }))
@@ -92,7 +150,7 @@ test('list keeps a resumable cursor across backend pages', async () => {
   assert.equal(next.nextBefore, null);
 
   // A cursor is bound to its filters: reusing it after changing the query fails closed.
-  await assert.rejects(service.run({ action: 'list', tag: 'other', before: page.nextBefore }),
+  await assert.rejects(service.run({ action: 'list', tag: 'idea', keywords: 'x', before: page.nextBefore }),
     (error) => error instanceof HomeError && /分页位置无效/.test(error.message));
   await service.close();
 });

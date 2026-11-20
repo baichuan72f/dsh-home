@@ -99,11 +99,13 @@ export function createHomeTool(service) {
 export function createNotesTool(service) {
   return {
     name: 'dsh_home_notes',
-    description: 'Read the card-note timeline, search by words or tag, fetch a full note, or save explicitly requested note content. list returns up to 30 notes with an opaque nextBefore cursor; get retrieves a known ID. create requires a unique requestId: reuse the same ID and content after an uncertain result, never silently retry with a new ID. No update or delete operation. The notes backend is configured on the DSH Plugins page — either the hosted Flomo service or a self-hosted Blinko server — and its token is stored only through the credentials service; credentials are never returned.',
+    description: 'Read the card-note timeline, search by words or tag, fetch the tag tree, fetch a full note, or save explicitly requested note content. list returns up to 30 notes with an opaque nextBefore cursor; tags returns every tag with its hierarchical path; get retrieves a known ID. create requires a unique requestId: reuse the same ID and content after an uncertain result, never silently retry with a new ID. No update or delete operation, and tag editing/deletion stays in the notes backend UI. The notes backend is configured on the DSH Plugins page — either the hosted Flomo service or a self-hosted Blinko server — and its token is stored only through the credentials service; credentials are never returned.',
     parameters: { type: 'object', additionalProperties: false, required: ['action'], properties: {
-      action: { type: 'string', enum: ['list', 'get', 'create'] },
+      action: { type: 'string', enum: ['list', 'get', 'create', 'tags'] },
       keywords: { type: 'string', description: 'Optional search words for list; matched by the notes backend (Blinko full-text, Flomo keyword search).' },
-      tag: { type: 'string', description: 'Optional exact tag for list.' },
+      tag: { type: 'string', description: 'Optional exact tag for list, matched against the full hierarchical path (for example "Books/Different/营销近视症").' },
+      tagId: { type: 'string', description: 'Optional tag id for list, taken from the tags action. Filters on the server.' },
+      withoutTag: { type: 'boolean', description: 'Set for list to keep only notes that carry no tag at all.' },
       before: { type: 'string', description: 'For older notes, pass nextBefore from the previous list with the same filters.' },
       id: { type: 'string', description: 'Required for get: note ID returned by list.' },
       content: { type: 'string', description: 'Required for create: the user-requested note, 1–30000 characters. Inline #tags are supported.' },
@@ -112,8 +114,8 @@ export function createNotesTool(service) {
     isConcurrencySafe: () => true,
     output: { schema: { type: 'object' }, render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }] },
     execute: (args) => {
-      if (!['list', 'get', 'create'].includes(args?.action)) throw new HomeError('不支持此笔记操作。');
-      return service.run(args);
+      if (!['list', 'get', 'create', 'tags'].includes(args?.action)) throw new HomeError('不支持此笔记操作。');
+      return service.run({ ...args, ...(args?.tagId === undefined ? {} : { tagId: String(args.tagId) }) });
     },
   };
 }
@@ -167,7 +169,7 @@ export async function apply(ctx, config) {
   ctx.provide('dshHome', service);
   ctx.effect(() => ctx.connection.fetch.register({
     path: '/api/dsh-home', methods: ['GET', 'POST'], requestBody: 'buffered',
-    fetch: createHomeFetchHandler(service, 'get', () => ({ features: { flomo: notesEnabled, blinko: blinkoEnabled, notesProvider } })),
+    fetch: createHomeFetchHandler(service, 'get', () => ({ features: { flomo: notesEnabled, blinko: blinkoEnabled, notesProvider }, blinko: blinkoEnabled ? { endpoint: blinkoEndpoint } : null })),
   }));
   ctx.effect(() => ctx.tools.register(createHomeTool(service)));
 
