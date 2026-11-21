@@ -314,7 +314,7 @@ window.__ModuleLoader__.load({
 .ch-tag-panel input{width:100%;border:1px solid color-mix(in srgb,var(--ch-ink) 14%,transparent);border-radius:8px;background:var(--ch-card);color:var(--ch-ink);padding:7px 9px;font-size:12px}
 .ch-tag-panel input::placeholder{color:var(--ch-ink-soft);opacity:1}
 .ch-tag-search{position:sticky;top:0;z-index:1;padding-bottom:8px;background:var(--ch-glass);backdrop-filter:blur(10px)}
-.ch-tag-panel-hint{opacity:.72}
+.ch-tag-panel-hint{flex:1 0 100%;order:9;font-size:10px;opacity:.62}
 .ch-tag-list{display:flex;flex-direction:column;gap:2px;margin-top:8px}
 .ch-tag-line{display:flex;align-items:center;gap:2px;border-radius:7px}
 .ch-tag-caret{flex:0 0 auto;width:24px;height:24px;display:inline-flex;align-items:center;justify-content:center;border:0;background:transparent;color:var(--ch-ink-soft);padding:0;min-height:auto;font-size:12px;line-height:1;border-radius:6px;transition:transform .12s ease,background .12s ease,color .12s ease}
@@ -328,7 +328,8 @@ window.__ModuleLoader__.load({
 .ch-tag-row:hover{background:var(--ch-btn-bg);color:var(--ch-ink)}
 .ch-tag-row.ch-tag-row-on{background:var(--ch-ink);color:var(--ch-card)}
 .ch-tag-row span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.ch-tag-panel-foot{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:9px;padding-top:9px;border-top:1px solid color-mix(in srgb,var(--ch-ink) 10%,transparent);font-size:11px;color:var(--ch-ink-soft)}
+.ch-tag-panel-foot{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:8px;margin-top:9px;padding-top:9px;border-top:1px solid color-mix(in srgb,var(--ch-ink) 10%,transparent);font-size:11px;color:var(--ch-ink-soft)}
+.ch-tag-panel-foot a{flex:0 0 auto;white-space:nowrap}
 .ch-tag-panel-foot a{color:var(--ch-ink);text-decoration:none}
 .ch-tag-panel-foot a:hover{text-decoration:underline}
 .ch-notes-day{margin-bottom:24px}
@@ -963,7 +964,7 @@ window.__ModuleLoader__.load({
         h('section', { className: 'ch-shortcuts', hidden: view !== 'work', 'aria-label': t('shortcuts') }, h('div', { className: 'ch-section-head' }, h('div', { className: 'ch-section-label' }, t('shortcutsHeading'), h('span', null, t('dailyDirection'))), h('div', { className: 'ch-tabs', 'aria-label': t('shortcutCategories') }, ['全部', '学习', '求职', '项目', '创作', '生活', '资讯'].map((cat) => h('button', { key: cat, className: 'ch-tab' + (cat === category ? ' ch-selected' : ''), 'aria-pressed': cat === category, disabled: edit && cat !== '全部', onClick: () => setCategory(cat) }, displayLabel(cat, t))))), h('div', { className: 'ch-link-grid' }, state.bookmarks.filter((b) => category === '全部' || b.category === category).map((b, index) => h('div', { key: b.id, 'data-bookmark': b.id, 'data-category': b.category, className: `ch-link${edit ? ' ch-edit-link' : ''}${drop === b.id ? ' ch-drop' : ''}${drag?.id === b.id ? ' ch-dragging' : ''}`, ...dropProps('bookmark', b.id) }, h('a', { href: b.url, target: '_blank', rel: 'noopener noreferrer', title: `${b.title} · ${new URL(b.url).hostname}`, draggable: edit && !busy, onClick: (e) => { if (edit) { e.preventDefault(); setModal({ type: 'bookmark', value: b }); } }, onDragStart: (e) => { if (edit) beginDrag(e, 'bookmark', b.id); else e.preventDefault(); }, onDragEnd: () => { setDrag(null); setDrop(null); } }, h(BookmarkLogo, { bookmark: b }), h('span', { className: 'ch-link-name' }, b.title)), edit && h('div', { className: 'ch-link-controls' }, ib('up', t('moveBookmarkEarlier', { title: b.title }), () => move('bookmark', b.id, -1), { disabled: busy || index === 0 }), ib('down', t('moveBookmarkLater', { title: b.title }), () => move('bookmark', b.id, 1), { disabled: busy || index === state.bookmarks.length - 1 }), ib('edit', t('editBookmarkLabel', { title: b.title }), () => setModal({ type: 'bookmark', value: b })), ib('trash', t('deleteBookmarkLabel', { title: b.title }), () => setModal({ type: 'delete', kind: 'bookmark', value: b }))))), h('button', { className: 'ch-link ch-link-add', onClick: () => setModal({ type: 'bookmark' }), disabled: busy }, icon('plus', 22), t('addLink')))),
         edit && h('div', { className: 'ch-edit-note' }, t('layoutHint')),
         h('div', { hidden: view !== 'work' }, h('main', { className: 'ch-grid', 'aria-label': t('workspace'), 'aria-busy': busy }, state.layout.map((id) => cards[id]))),
-        flomoEnabled && h('div', { hidden: view !== 'notes', className: 'ch-notes-view' }, h(NotesView, { composerRef, reloadKey: flomoVersion, blinkoEndpoint: state.blinko?.endpoint || '' })),
+        flomoEnabled && h('div', { hidden: view !== 'notes', className: 'ch-notes-view' }, h(NotesView, { composerRef, reloadKey: flomoVersion, blinkoEndpoint: state.blinko?.endpoint || (state.features?.notesProvider === 'blinko' ? 'http://127.0.0.1:1111' : '') })),
         h('footer', null, h('div', { className: 'ch-footer' }, icon('leaf', 15), h('span', null, QUOTES[quote]), ib('reset', t('nextQuote'), () => setQuote((quote + 1) % QUOTES.length))), h('div', { className: 'ch-footer-sign' }, 'HOME · 每一天，都算数')),
         modal && (modal.type === 'background' ? h(BackgroundEditor, { state, run, close: closeModal }) : h(Editor, { key: modal.type + (modal.value?.id || ''), model: modal, state, run, close: closeModal, onFlomoConnected: () => setFlomoVersion((value) => value + 1) }))
       ));
